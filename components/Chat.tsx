@@ -5,9 +5,14 @@ import { Message } from "./types";
 import MessageList from "./MessageList";
 import ChatInput from "./ChatInput";
 import ModelSelector from "./ModelSelector";
-import { DEFAULT_MODEL, MODELS } from "@/lib/openrouter";
 
 const STORAGE_KEY = "openbot_conversation";
+const MODEL_STORAGE_KEY = "openbot_model";
+
+interface ModelOption {
+  id: string;
+  name: string;
+}
 
 function loadMessages(): Message[] {
   if (typeof window === "undefined") return [];
@@ -24,11 +29,57 @@ function saveMessages(messages: Message[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
 }
 
+function loadSavedModel(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(MODEL_STORAGE_KEY);
+}
+
+async function fetchModelsFromAPI(): Promise<ModelOption[]> {
+  try {
+    const res = await fetch("/api/models");
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch {
+    // fallback
+  }
+  return [];
+}
+
 export default function Chat() {
   const [messages, setMessages] = useState<Message[]>(loadMessages);
   const [isLoading, setIsLoading] = useState(false);
-  const [model, setModel] = useState(DEFAULT_MODEL);
+  const [model, setModel] = useState("");
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const initialized = useRef(false);
+
+  useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
+
+    (async () => {
+      try {
+        const fetched = await fetchModelsFromAPI();
+        setModels(fetched);
+        const saved = loadSavedModel();
+        if (saved && fetched.some((m) => m.id === saved)) {
+          setModel(saved);
+        } else if (fetched.length > 0) {
+          setModel(fetched[0].id);
+        }
+      } finally {
+        setModelsLoading(false);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (model) {
+      localStorage.setItem(MODEL_STORAGE_KEY, model);
+    }
+  }, [model]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -115,7 +166,6 @@ export default function Chat() {
 
   return (
     <div className="flex flex-col h-full max-w-4xl mx-auto w-full">
-      {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-gray-800 bg-gray-950/80 backdrop-blur sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-blue-500 flex items-center justify-center">
@@ -126,7 +176,7 @@ export default function Chat() {
           <h1 className="text-lg font-semibold">OpenBot</h1>
         </div>
         <div className="flex items-center gap-2">
-          <ModelSelector model={model} setModel={setModel} models={MODELS} />
+          <ModelSelector model={model} setModel={setModel} models={models} loading={modelsLoading} />
           <button
             onClick={clearChat}
             className="px-3 py-1.5 text-sm rounded-lg bg-gray-800 hover:bg-gray-700 transition-colors"
@@ -139,13 +189,10 @@ export default function Chat() {
         </div>
       </header>
 
-      {/* Messages */}
       <MessageList messages={messages} isLoading={isLoading} />
 
-      {/* Bottom spacer for scroll */}
       <div ref={bottomRef} className="h-4" />
 
-      {/* Input */}
       <div className="px-4 pb-4 pt-2 border-t border-gray-800 bg-gray-950/80 backdrop-blur sticky bottom-0">
         <ChatInput onSend={sendMessage} disabled={isLoading} />
       </div>
